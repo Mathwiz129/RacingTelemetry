@@ -1,8 +1,10 @@
 from gpiozero import DigitalInputDevice
-from time import sleep, time
-import csv
+from time import sleep
 from datetime import datetime
 from collections import deque
+from flask import Flask
+import threading
+import csv
 
 # -------- SETTINGS --------
 HALL_PIN = 2
@@ -12,9 +14,12 @@ SMOOTH_SAMPLES = 5
 CSV_FILE = "rpm_log.csv"
 # --------------------------
 
+app = Flask(__name__)
+
 sensor = DigitalInputDevice(HALL_PIN, pull_up=True)
 
 tick_count = 0
+current_rpm = 0
 rpm_buffer = deque(maxlen=SMOOTH_SAMPLES)
 
 def magnet_detected():
@@ -23,32 +28,49 @@ def magnet_detected():
 
 sensor.when_activated = magnet_detected
 
-# create csv file
+# create CSV file
 with open(CSV_FILE, "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["timestamp", "rpm"])
 
-print("RPM logger started")
+def rpm_loop():
+    global tick_count, current_rpm
 
-start_time = time()
+    print("RPM logger started")
 
-while True:
+    while True:
 
-    sleep(SAMPLE_TIME)
+        sleep(SAMPLE_TIME)
 
-    ticks = tick_count
-    tick_count = 0
+        ticks = tick_count
+        tick_count = 0
 
-    revs = ticks / MAGNETS_PER_REV
-    rpm = revs * 60
+        revs = ticks / MAGNETS_PER_REV
+        rpm = revs * 60
 
-    rpm_buffer.append(rpm)
-    smoothed_rpm = sum(rpm_buffer) / len(rpm_buffer)
+        rpm_buffer.append(rpm)
+        current_rpm = sum(rpm_buffer) / len(rpm_buffer)
 
-    timestamp = datetime.now().isoformat()
+        timestamp = datetime.now().isoformat()
 
-    with open(CSV_FILE, "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([timestamp, round(smoothed_rpm, 2)])
+        with open(CSV_FILE, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([timestamp, round(current_rpm, 2)])
 
-    print("RPM:", round(smoothed_rpm, 1))
+        print("RPM:", round(current_rpm,1))
+
+
+@app.route("/")
+def index():
+    return f"<h1>RPM: {round(current_rpm,1)}</h1>"
+
+
+def start_rpm_thread():
+    thread = threading.Thread(target=rpm_loop)
+    thread.daemon = True
+    thread.start()
+
+
+if __name__ == "__main__":
+    start_rpm_thread()
+    app.run(host="0.0.0.0", port=5000)
